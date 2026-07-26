@@ -294,6 +294,51 @@ function fmtQuota(quota) {
   return `${fmtNumber(quota.remaining)} / ${fmtNumber(quota.limit)}`;
 }
 
+function fmtUSD(n) {
+  if (n == null || n === 0) return '$0.00';
+  if (n < 0.01) return '<$0.01';
+  return '$' + Number(n).toFixed(2);
+}
+
+function fmtPct(used, limit) {
+  if (!limit || limit <= 0) return '0%';
+  const pct = (used / limit) * 100;
+  if (pct < 0.1) return '0%';
+  return pct.toFixed(1) + '%';
+}
+
+// 额度进度条:used/limit,颜色随使用率变化
+function usageBar(label, used, limit) {
+  const pct = limit > 0 ? Math.min(100, (used / limit) * 100) : 0;
+  const kind = pct >= 90 ? 'crit' : pct >= 70 ? 'warn' : 'ok';
+  const bar = el('div', { class: 'bar-track' }, [
+    el('div', { class: `bar-fill bar-${kind}`, style: `width:${pct}%` }),
+  ]);
+  return el('div', { class: 'usage-row' }, [
+    el('span', { class: 'usage-label', text: label }),
+    bar,
+    el('span', { class: 'usage-val mono', text: `${fmtUSD(used)} / ${fmtUSD(limit)}` }),
+  ]);
+}
+
+// 渲染单个 key 的额度消耗卡片
+function renderKeyUsageCard(k) {
+  const u = k.usage || {};
+  const monthlyLimit = u.monthly_limit || 60;
+  const card = el('div', { class: 'card key-usage-card' });
+  card.appendChild(el('div', { class: 'key-usage-header' }, [
+    el('span', { class: 'mono', text: k.label }),
+    el('span', { class: 'muted', style: 'font-size:11px', text: `${fmtNumber(u.requests || 0)} 次请求` }),
+  ]));
+  card.appendChild(usageBar('5 小时', u.five_hour || 0, 12));
+  card.appendChild(usageBar('每周', u.weekly || 0, 30));
+  card.appendChild(usageBar('每月', u.monthly || 0, monthlyLimit));
+  if (u.last_used_at && u.last_used_at !== '0001-01-01T00:00:00Z') {
+    card.appendChild(el('div', { class: 'muted', style: 'font-size:11px;text-align:right', text: '最近: ' + fmtTime(u.last_used_at) }));
+  }
+  return card;
+}
+
 // ----- 视图 ----------------------------------------------------------------
 
 const views = {};
@@ -335,6 +380,21 @@ views.dashboard = async () => {
   cacheCard.appendChild(el('div', { class: 'value', text: fmtNumber(stats.CacheEntries) + ' 条' }));
   cacheCard.appendChild(el('div', { class: 'delta', text: `累计 ${fmtNumber(stats.CacheTotalHits)} 次命中` }));
   root.appendChild(cacheCard);
+
+  // 额度消耗:每个 key 的 5h / 每周 / 每月 USD 用量
+  if (keys.length > 0) {
+    const usageSection = el('div', { class: 'section' });
+    usageSection.appendChild(el('div', { class: 'section-header' }, [
+      el('div', { class: 'section-title', text: 'Go Key 额度消耗' }),
+      el('span', { class: 'muted', style: 'font-size:12px', text: '基于请求 token 用量 × 模型单价本地估算' }),
+    ]));
+    const usageGrid = el('div', { class: 'usage-grid' });
+    for (const k of keys) {
+      usageGrid.appendChild(renderKeyUsageCard(k));
+    }
+    usageSection.appendChild(usageGrid);
+    root.appendChild(usageSection);
+  }
 
   // 当没有任何 key 时,显示快速开始指引,而不是直接催用户加 key
   if (keys.length === 0) {
@@ -406,11 +466,18 @@ views.keys = async () => {
       el('div', { class: 'section-title', text: 'OpenCode Go Key 列表' }),
       el('div', { class: 'section-sub', text: '管理多个 OpenCode Go 订阅密钥,请求会按策略从中选取使用。' }),
     ]),
-    el('button', {
-      class: 'btn btn-primary',
-      onclick: () => openAddKeyModal(root),
-      text: '+ 新增 Go Key',
-    }),
+    el('div', { class: 'row-actions' }, [
+      el('button', {
+        class: 'btn btn-sm btn-ghost',
+        text: '刷新',
+        onclick: () => views.keys(),
+      }),
+      el('button', {
+        class: 'btn btn-primary',
+        onclick: () => openAddKeyModal(root),
+        text: '+ 新增 Go Key',
+      }),
+    ]),
   ]);
   root.appendChild(header);
 
@@ -437,8 +504,7 @@ function renderKeysTable(keys, opts = {}) {
     el('th', { text: 'Go Key' }),
     el('th', { text: '权重' }),
     el('th', { text: '状态' }),
-    el('th', { text: '剩余额度' }),
-    el('th', { text: '重置时间' }),
+    el('th', { text: '额度消耗 (5h / 周 / 月)' }),
     el('th', { text: '最近错误' }),
     el('th', { text: '', class: 'right' }),
   ]));
@@ -458,8 +524,7 @@ function renderKeysTable(keys, opts = {}) {
       el('td', { class: 'mono', text: k.api_key_masked || '—' }),
       el('td', { class: 'mono', text: String(k.weight) }),
       el('td', {}, pill(status, statusKind)),
-      el('td', { class: 'mono', text: fmtQuota(k.quota) }),
-      el('td', { class: 'muted', text: k.quota ? fmtTime(k.quota.reset_at) : '—' }),
+      el('td', {}, renderUsageCell(k.usage)),
       el('td', { class: 'muted', style: 'max-width:240px;overflow:hidden;text-overflow:ellipsis', text: k.last_error || '' }),
       el('td', { class: 'right' }, rowActions(k, opts)),
     ]);
@@ -468,6 +533,33 @@ function renderKeysTable(keys, opts = {}) {
   table.appendChild(tbody);
   wrap.appendChild(table);
   return wrap;
+}
+
+// 在 keys 表格里渲染紧凑的额度消耗单元格:三行迷你进度条
+function renderUsageCell(u) {
+  if (!u) return el('span', { class: 'muted', text: '—' });
+  const ml = u.monthly_limit || 60;
+  const cell = el('div', { class: 'usage-cell' });
+  cell.appendChild(miniBar('5h', u.five_hour || 0, 12));
+  cell.appendChild(miniBar('周', u.weekly || 0, 30));
+  cell.appendChild(miniBar('月', u.monthly || 0, ml));
+  if (u.last_used_at && u.last_used_at !== '0001-01-01T00:00:00Z') {
+    cell.appendChild(el('div', { class: 'muted', style: 'font-size:10px;margin-top:2px', text: '最近 ' + fmtTime(u.last_used_at) }));
+  }
+  return cell;
+}
+
+// 紧凑的单行进度条:"5h $0.05/$12.00 [====----]"
+function miniBar(label, used, limit) {
+  const pct = limit > 0 ? Math.min(100, (used / limit) * 100) : 0;
+  const kind = pct >= 90 ? 'crit' : pct >= 70 ? 'warn' : 'ok';
+  return el('div', { class: 'mini-usage' }, [
+    el('span', { class: 'mini-label', text: label }),
+    el('div', { class: 'bar-track mini-bar' }, [
+      el('div', { class: `bar-fill bar-${kind}`, style: `width:${pct}%` }),
+    ]),
+    el('span', { class: 'mono mini-val', text: `${fmtUSD(used)}/${fmtUSD(limit)}` }),
+  ]);
 }
 
 function rowActions(k, opts) {

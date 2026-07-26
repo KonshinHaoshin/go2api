@@ -520,3 +520,75 @@ input.field:focus, select.field:focus { border-color: var(--accent); }
   max-height: 140px;
   overflow: auto;
 }
+
+/* --- 额度消耗进度条 --- */
+.usage-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+.key-usage-card {
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.key-usage-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 6px;
+  margin-bottom: 2px;
+}
+.usage-row {
+  display: grid;
+  grid-template-columns: 56px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.usage-label { color: var(--text-mute); }
+.bar-track {
+  height: 8px;
+  background: var(--bg-0);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  overflow: hidden;
+  min-width: 60px;
+}
+.bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.3s ease;
+}
+.bar-ok { background: #3fb950; }
+.bar-warn { background: #d29922; }
+.bar-crit { background: #f85149; }
+.usage-val {
+  font-size: 11.5px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+/* --- keys 表格里的紧凑额度条 --- */
+.usage-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 200px;
+}
+.mini-usage {
+  display: grid;
+  grid-template-columns: 18px 1fr auto;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+.mini-label { color: var(--text-mute); }
+.mini-bar { height: 5px; }
+.mini-val {
+  font-size: 10.5px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}

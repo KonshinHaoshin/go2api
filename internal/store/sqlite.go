@@ -78,16 +78,21 @@ CREATE TABLE IF NOT EXISTS quota_state (
 );
 
 CREATE TABLE IF NOT EXISTS request_logs (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    ts          INTEGER NOT NULL,
-    key_id      TEXT,
-    model       TEXT,
-    status      INTEGER,
-    cache_hit   INTEGER NOT NULL DEFAULT 0,
-    latency_ms  INTEGER NOT NULL DEFAULT 0,
-    error       TEXT
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts               INTEGER NOT NULL,
+    key_id           TEXT,
+    model            TEXT,
+    status           INTEGER,
+    cache_hit        INTEGER NOT NULL DEFAULT 0,
+    latency_ms       INTEGER NOT NULL DEFAULT 0,
+    prompt_tokens    INTEGER NOT NULL DEFAULT 0,
+    completion_tokens INTEGER NOT NULL DEFAULT 0,
+    cached_tokens    INTEGER NOT NULL DEFAULT 0,
+    cost             REAL NOT NULL DEFAULT 0,
+    error            TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_logs_ts ON request_logs(ts);
+CREATE INDEX IF NOT EXISTS idx_logs_key_ts ON request_logs(key_id, ts);
 
 CREATE TABLE IF NOT EXISTS tokens (
     id           TEXT PRIMARY KEY,
@@ -105,7 +110,39 @@ CREATE INDEX IF NOT EXISTS idx_tokens_hash ON tokens(token_hash);
 `
 
 func (s *DB) migrate() error {
-	_, err := s.Exec(schema)
+	if _, err := s.Exec(schema); err != nil {
+		return err
+	}
+	return s.migrateColumns()
+}
+
+// migrateColumns adds columns that were introduced after the initial schema.
+// SQLite's ALTER TABLE ADD COLUMN is idempotent-safe when wrapped in a column
+// existence check. This lets existing databases upgrade in place.
+func (s *DB) migrateColumns() error {
+	addIfMissing := func(table, col, decl string) error {
+		var n int
+		err := s.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name=?`, table, col).Scan(&n)
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			_, err = s.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, col, decl))
+		}
+		return err
+	}
+	cols := [][3]string{
+		{"request_logs", "prompt_tokens", "INTEGER NOT NULL DEFAULT 0"},
+		{"request_logs", "completion_tokens", "INTEGER NOT NULL DEFAULT 0"},
+		{"request_logs", "cached_tokens", "INTEGER NOT NULL DEFAULT 0"},
+		{"request_logs", "cost", "REAL NOT NULL DEFAULT 0"},
+	}
+	for _, c := range cols {
+		if err := addIfMissing(c[0], c[1], c[2]); err != nil {
+			return err
+		}
+	}
+	_, err := s.Exec(`CREATE INDEX IF NOT EXISTS idx_logs_key_ts ON request_logs(key_id, ts)`)
 	return err
 }
 
@@ -372,10 +409,13 @@ func (s *DB) ResetTokenUsage(ctx context.Context, id string) error {
 // LogRequest appends a request_log row. Errors are non-fatal in callers.
 func (s *DB) LogRequest(ctx context.Context, l LogRow) error {
 	_, err := s.ExecContext(ctx, `
-        INSERT INTO request_logs (ts, key_id, model, status, cache_hit, latency_ms, error)
-        VALUES (?,?,?,?,?,?,?)`,
+        INSERT INTO request_logs (ts, key_id, model, status, cache_hit, latency_ms,
+                                   prompt_tokens, completion_tokens, cached_tokens, cost, error)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
 		l.Timestamp.Unix(), nullString(l.KeyID), nullString(l.Model), l.Status,
-		boolToInt(l.CacheHit), l.LatencyMs, nullString(l.Error))
+		boolToInt(l.CacheHit), l.LatencyMs,
+		l.PromptTokens, l.CompletionTokens, l.CachedTokens, l.Cost,
+		nullString(l.Error))
 	return err
 }
 
@@ -396,6 +436,54 @@ func (s *DB) StatsSummary(ctx context.Context) (StatsRow, error) {
 	row = s.QueryRowContext(ctx, `SELECT COALESCE(SUM(hits), 0) FROM cache`)
 	_ = row.Scan(&st.CacheTotalHits)
 	return st, nil
+}
+
+// KeyUsage is the per-key cost summary for the three rolling budget windows.
+type KeyUsage struct {
+	KeyID         string
+	FiveHourCost  float64
+	WeeklyCost    float64
+	MonthlyCost   float64
+	TotalRequests int64
+	LastUsedAt    time.Time
+	ModelsUsed    string // comma-separated distinct model IDs
+}
+
+// KeyUsageSummary returns the aggregated cost for each key across the three
+// rolling budget windows (5h, 7d, 30d). Only non-cache-hit, successful
+// requests are counted — cached responses don't consume upstream budget.
+func (s *DB) KeyUsageSummary(ctx context.Context) ([]KeyUsage, error) {
+	now := time.Now()
+	rows, err := s.QueryContext(ctx, `
+        SELECT
+            key_id,
+            COALESCE(SUM(CASE WHEN ts > ? THEN cost ELSE 0 END), 0) AS five_hour,
+            COALESCE(SUM(CASE WHEN ts > ? THEN cost ELSE 0 END), 0) AS weekly,
+            COALESCE(SUM(CASE WHEN ts > ? THEN cost ELSE 0 END), 0) AS monthly,
+            COUNT(*) AS total,
+            COALESCE(MAX(ts), 0) AS last_used,
+            COALESCE(GROUP_CONCAT(DISTINCT model), '') AS models_used
+        FROM request_logs
+        WHERE key_id IS NOT NULL AND cache_hit = 0 AND status >= 200 AND status < 300
+        GROUP BY key_id`,
+		now.Add(-5*time.Hour).Unix(),
+		now.Add(-7*24*time.Hour).Unix(),
+		now.Add(-30*24*time.Hour).Unix())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []KeyUsage
+	for rows.Next() {
+		var u KeyUsage
+		var lastUsed int64
+		if err := rows.Scan(&u.KeyID, &u.FiveHourCost, &u.WeeklyCost, &u.MonthlyCost, &u.TotalRequests, &lastUsed, &u.ModelsUsed); err != nil {
+			return nil, err
+		}
+		u.LastUsedAt = time.Unix(lastUsed, 0)
+		out = append(out, u)
+	}
+	return out, rows.Err()
 }
 
 // --- row types ---
@@ -449,13 +537,17 @@ type CacheRow struct {
 }
 
 type LogRow struct {
-	Timestamp time.Time
-	KeyID     string
-	Model     string
-	Status    int
-	CacheHit  bool
-	LatencyMs int64
-	Error     string
+	Timestamp        time.Time
+	KeyID            string
+	Model            string
+	Status           int
+	CacheHit         bool
+	LatencyMs        int64
+	PromptTokens     int64
+	CompletionTokens int64
+	CachedTokens     int64
+	Cost             float64
+	Error            string
 }
 
 type StatsRow struct {

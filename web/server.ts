@@ -74,7 +74,9 @@ function log(level: string, msg: string, extra?: LogExtra): void {
 
 // --- Static UI ----------------------------------------------------------------
 
-const PUBLIC_DIR = path.join(__dirname, 'public');
+// public/ lives in web/, one level up from dist/ when compiled, or in the
+// same dir when run via tsx.
+const PUBLIC_DIR = path.resolve(__dirname, isCompiled ? '..' : '.', 'public');
 // Serve static files but force revalidation on every request so users always
 // pick up the latest HTML/JS/CSS without needing a hard refresh.
 app.use(express.static(PUBLIC_DIR, {

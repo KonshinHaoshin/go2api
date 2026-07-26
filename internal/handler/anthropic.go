@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/user/go2api/internal/cache"
+	"github.com/user/go2api/internal/pricing"
 	"github.com/user/go2api/internal/proxy"
 	"github.com/user/go2api/internal/store"
 )
@@ -134,11 +135,15 @@ func (h *Anthropic) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_ = h.Store.LogRequest(r.Context(), store.LogRow{
 		Timestamp: time.Now(), Model: probe.Model,
 		Status: result.Status, CacheHit: false,
-		LatencyMs: time.Since(start).Milliseconds(),
+		LatencyMs:        time.Since(start).Milliseconds(),
+		KeyID:            result.KeyID,
+		PromptTokens:     result.Usage.PromptTokens,
+		CompletionTokens: result.Usage.CompletionTokens,
+		CachedTokens:     result.Usage.CachedPromptTokens,
+		Cost:             pricing.Cost(probe.Model, result.Usage.PromptTokens, result.Usage.CompletionTokens, result.Usage.CachedPromptTokens),
 	})
 }
 
-// serveCrossFormatAsOpenAI converts an incoming Anthropic request to OpenAI
 // Chat Completions, forwards to /chat/completions, and converts the
 // response back to Anthropic Messages.
 func (h *Anthropic) serveCrossFormatAsOpenAI(w http.ResponseWriter, r *http.Request, anthropicBody []byte, model string, stream bool, start time.Time) {

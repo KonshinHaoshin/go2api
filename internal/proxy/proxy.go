@@ -59,6 +59,21 @@ type Result struct {
 	Body        []byte
 	Headers     map[string]string
 	Streaming   bool
+	// KeyID is the upstream key that served this request. Empty for streaming
+	// (the handler picks the key itself in that case).
+	KeyID string
+	// Usage is the token usage extracted from the upstream response body.
+	// Only populated for non-streaming, JSON responses.
+	Usage Usage
+}
+
+// Usage holds token counts extracted from an upstream response.
+// OpenAI format: usage.prompt_tokens / completion_tokens / prompt_tokens_details.cached_tokens.
+// Anthropic format: usage.input_tokens / output_tokens / cache_read_input_tokens.
+type Usage struct {
+	PromptTokens       int64
+	CompletionTokens   int64
+	CachedPromptTokens int64
 }
 
 // ErrUpstream is returned when the upstream returned a non-2xx status code.
@@ -212,13 +227,55 @@ func (p *Proxy) callOnce(ctx context.Context, plan ForwardPlan, key *keypool.Key
 	if err != nil {
 		return nil, fmt.Errorf("read body: %w", err)
 	}
+	usage := extractUsage(bodyBytes)
 	return &Result{
 		Status:      resp.StatusCode,
 		ContentType: resp.Header.Get("Content-Type"),
 		Body:        bodyBytes,
 		Headers:     headers,
 		Streaming:   false,
+		KeyID:       key.ID,
+		Usage:       usage,
 	}, nil
+}
+
+// extractUsage parses the token usage out of an upstream JSON response body.
+// Handles both OpenAI Chat Completions and Anthropic Messages formats. Returns
+// zero values if the body is not JSON or has no usage field.
+func extractUsage(body []byte) Usage {
+	var v map[string]any
+	if err := json.Unmarshal(body, &v); err != nil {
+		return Usage{}
+	}
+	u, ok := v["usage"].(map[string]any)
+	if !ok {
+		return Usage{}
+	}
+	// Detect format by field names present.
+	if pt, ok := u["prompt_tokens"].(float64); ok {
+		// OpenAI format.
+		ct, _ := u["completion_tokens"].(float64)
+		var cached float64
+		if det, ok := u["prompt_tokens_details"].(map[string]any); ok {
+			cached, _ = det["cached_tokens"].(float64)
+		}
+		return Usage{
+			PromptTokens:       int64(pt),
+			CompletionTokens:   int64(ct),
+			CachedPromptTokens: int64(cached),
+		}
+	}
+	if it, ok := u["input_tokens"].(float64); ok {
+		// Anthropic format.
+		ot, _ := u["output_tokens"].(float64)
+		cached, _ := u["cache_read_input_tokens"].(float64)
+		return Usage{
+			PromptTokens:       int64(it),
+			CompletionTokens:   int64(ot),
+			CachedPromptTokens: int64(cached),
+		}
+	}
+	return Usage{}
 }
 
 // rewriteModel normalizes the model field in the request body. The upstream

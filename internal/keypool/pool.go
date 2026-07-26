@@ -9,11 +9,13 @@ import (
 	"math/rand"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/user/go2api/internal/config"
+	"github.com/user/go2api/internal/pricing"
 	"github.com/user/go2api/internal/store"
 )
 
@@ -266,13 +268,41 @@ func (p *Pool) RecordQuota(ctx context.Context, k *Key, headers map[string]strin
 	}
 }
 
+// monthlyLimitFor returns the most restrictive monthly USD budget for the
+// given comma-separated model list. Premium-tier models (grok-4.5, kimi-k3,
+// deepseek-v4-pro, mimo-v2.5-pro) have a $15 monthly cap; all others have
+// $60. If a key has used multiple models, the smallest limit wins because
+// that's the ceiling that applies when the key is used for that model.
+func monthlyLimitFor(modelsCSV string) float64 {
+	if modelsCSV == "" {
+		return 60
+	}
+	min := 60.0
+	for _, m := range strings.Split(modelsCSV, ",") {
+		m = strings.TrimSpace(m)
+		if p, ok := pricing.Models[m]; ok && p.MonthlyLimit < min {
+			min = p.MonthlyLimit
+		}
+	}
+	return min
+}
+
 // Snapshot returns a copy of the current key state for the admin endpoint.
 func (p *Pool) Snapshot(ctx context.Context) ([]KeyView, error) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
+
+	// Fetch per-key cost usage once for all keys.
+	usageByCost, _ := p.db.KeyUsageSummary(ctx)
+	usageMap := make(map[string]store.KeyUsage, len(usageByCost))
+	for _, u := range usageByCost {
+		usageMap[u.KeyID] = u
+	}
+
 	views := make([]KeyView, 0, len(p.keys))
 	for _, k := range p.keys {
 		q, _ := p.db.GetQuota(ctx, k.ID)
+		u := usageMap[k.ID]
 		views = append(views, KeyView{
 			ID:            k.ID,
 			Label:         k.Label,
@@ -285,6 +315,14 @@ func (p *Pool) Snapshot(ctx context.Context) ([]KeyView, error) {
 				Remaining: q.Remaining,
 				Limit:     q.Limit,
 				ResetAt:   q.ResetAt,
+			},
+			Usage: UsageView{
+				FiveHour:     u.FiveHourCost,
+				Weekly:       u.WeeklyCost,
+				Monthly:      u.MonthlyCost,
+				MonthlyLimit: monthlyLimitFor(u.ModelsUsed),
+				Requests:     u.TotalRequests,
+				LastUsedAt:   u.LastUsedAt,
 			},
 		})
 	}
@@ -355,12 +393,24 @@ type KeyView struct {
 	CooldownUntil time.Time `json:"cooldown_until"`
 	LastError     string    `json:"last_error,omitempty"`
 	Quota         QuotaView `json:"quota"`
+	Usage         UsageView `json:"usage"`
 }
 
 type QuotaView struct {
 	Remaining float64   `json:"remaining"`
 	Limit     float64   `json:"limit"`
 	ResetAt   time.Time `json:"reset_at"`
+}
+
+// UsageView shows the USD cost consumed by this key across the three rolling
+// budget windows, plus the total request count and last-used timestamp.
+type UsageView struct {
+	FiveHour     float64   `json:"five_hour"`
+	Weekly       float64   `json:"weekly"`
+	Monthly      float64   `json:"monthly"`
+	MonthlyLimit float64   `json:"monthly_limit"`
+	Requests     int64     `json:"requests"`
+	LastUsedAt   time.Time `json:"last_used_at"`
 }
 
 func sliceToSet(s []int) map[int]bool {
