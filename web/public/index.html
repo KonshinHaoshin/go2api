@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>go2api · 管理控制台</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='7' fill='%23f97316'/></svg>">
+</head>
+<body>
+  <!-- 登录界面(无 JWT 时显示) -->
+  <div class="login-shell" id="login-shell" hidden>
+    <div class="login-card">
+      <div class="login-brand">
+        <div class="brand-mark">go</div>
+        <div>
+          <div class="login-title">go2api</div>
+          <div class="login-sub">管理控制台</div>
+        </div>
+      </div>
+      <form class="login-form" id="login-form" autocomplete="on">
+        <label class="field-label">用户名</label>
+        <input class="field" id="login-username" name="username" autocomplete="username" required autofocus>
+        <label class="field-label">密码</label>
+        <input class="field" id="login-password" name="password" type="password" autocomplete="current-password" required>
+        <div class="login-error" id="login-error" hidden></div>
+        <button class="btn btn-primary login-submit" type="submit">登 录</button>
+      </form>
+      <div class="login-foot">
+        请使用服务器配置的管理员账号登录。
+      </div>
+    </div>
+  </div>
+
+  <!-- 主界面(登录后显示) -->
+  <div class="layout" id="app-shell" hidden>
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">go</div>
+        <div class="brand-text">
+          <div class="brand-name">go2api</div>
+          <div class="brand-sub">管理控制台</div>
+        </div>
+      </div>
+
+      <nav class="nav">
+        <a class="nav-item" data-route="dashboard" href="#/dashboard">
+          <span class="nav-icon">▣</span><span>概览</span>
+        </a>
+        <a class="nav-item" data-route="keys" href="#/keys">
+          <span class="nav-icon">⌬</span><span>Go Key</span>
+        </a>
+        <a class="nav-item" data-route="tokens" href="#/tokens">
+          <span class="nav-icon">⚿</span><span>访问令牌</span>
+        </a>
+        <a class="nav-item" data-route="models" href="#/models">
+          <span class="nav-icon">◊</span><span>模型</span>
+        </a>
+        <a class="nav-item" data-route="cache" href="#/cache">
+          <span class="nav-icon">⊟</span><span>缓存</span>
+        </a>
+      </nav>
+
+      <div class="sidebar-foot">
+        <div class="status-dot" id="health-dot" title="检测中"></div>
+        <span id="health-text">检测中</span>
+        <span class="spacer"></span>
+        <button class="btn btn-sm btn-ghost" id="logout-btn" title="退出登录">退出</button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="topbar-title" id="page-title">概览</div>
+        <div class="topbar-actions">
+          <span class="muted" id="user-tag" style="font-size:12px"></span>
+          <button class="btn btn-ghost" id="refresh-btn">刷新</button>
+        </div>
+      </header>
+
+      <section class="content" id="content"></section>
+    </main>
+  </div>
+
+  <!-- 新增 key 的弹窗 -->
+  <div class="modal-backdrop" id="modal" hidden>
+    <div class="modal">
+      <div class="modal-header">
+        <div class="modal-title" id="modal-title">新增 Go Key</div>
+        <button class="modal-close" id="modal-close" aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body" id="modal-body"></div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" id="modal-cancel">取消</button>
+        <button class="btn btn-primary" id="modal-confirm">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast-stack" id="toast-stack"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

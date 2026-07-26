@@ -1,0 +1,41 @@
+# go2api configuration
+# Copy this file to configs/config.yaml and edit before running.
+
+server:
+  listen: ":8080"
+  # Tokens that clients must present in Authorization / x-api-key.
+  # Leave empty to disable auth (not recommended for production).
+  auth_tokens:
+    - "change-me-please"
+  read_timeout_seconds: 60
+
+upstream:
+  # OpenCode Go base URL. Override only if you proxy it elsewhere.
+  base_url: "https://opencode.ai/zen/go/v1"
+  timeout_seconds: 300
+
+cache:
+  enabled: true
+  ttl_seconds: 3600        # 1 hour
+  skip_streaming: true
+  max_response_bytes: 4194304   # 4 MiB
+
+keypool:
+  # round_robin | weighted | quota_aware
+  strategy: weighted
+  failover:
+    enabled: true
+    max_retries: 2
+    cooldown_seconds: 60
+    retry_on: [429, 500, 502, 503, 504]
+  # 在这里添加你的 OpenCode Go 订阅 key。格式:
+  #   - label: "取个名字"
+  #     api_key: "sk-go-xxxxxx"   # 替换成你的真实 key
+  #     weight: 1                   # 加权轮询时的权重
+  #
+  # 也可以不在这里写,直接在 Web UI → API Key 页面运行时添加。
+  keys: []
+
+log:
+  level: info
+  pretty: true

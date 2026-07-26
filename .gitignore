@@ -1,0 +1,62 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+*.a
+
+# Output directories
+*.log
+*.tmp
+*.cache
+
+# TypeScript build output
+web/dist/
+
+# IDE/editor directories and files
+.vscode/
+.idea/
+*.swp
+*.swo
+*.DS_Store
+Thumbs.db
+desktop.ini
+
+# Go tooling
+bin/
+pkg/
+# Ignore local build artifacts created by `go test` or `go build`
+*.test
+
+# Dependency directories
+vendor/
+node_modules/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# macOS
+.AppleDouble
+.LSOverride
+._*
+
+# Windows
+ehthumbs.db
+Icon?
+
+# Misc
+coverage.out
+.gstack/
+
+# Runtime data — SQLite databases and per-machine state
+data/*.db
+data/*.db-wal
+data/*.db-shm
+
+# Local AI tool settings
+.claude/
