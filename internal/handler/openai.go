@@ -277,6 +277,13 @@ func (h *OpenAI) streamConverted(ctx context.Context, plan proxy.ForwardPlan, w 
 			return err
 		}
 		req.Header.Set("Authorization", "Bearer "+key.APIKey)
+		// /messages (Anthropic) needs both x-api-key and anthropic-version
+		// in addition to Authorization. Without these the upstream returns
+		// 401 "Missing API key." even though Authorization is set.
+		if plan.Endpoint == "/messages" {
+			req.Header.Set("x-api-key", key.APIKey)
+			req.Header.Set("anthropic-version", "2023-06-01")
+		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Accept", "application/json, text/event-stream")
 
