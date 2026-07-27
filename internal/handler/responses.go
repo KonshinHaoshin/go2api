@@ -145,8 +145,10 @@ func (h *Responses) serveStream(w http.ResponseWriter, r *http.Request, req *res
 	}
 
 	if err := h.streamWithRetries(r.Context(), plan, req, family, w, r); err != nil {
-		h.Logger.Warn("responses: stream aborted",
-			"model", req.Model, "family", string(family), "err", err)
+		// streamWithRetries returns non-nil ONLY when no SSE event has been
+		// written yet (retries are exhausted before committing HTTP 200).
+		// Write a proper error response so the client doesn't see empty HTTP 200.
+		h.writeUpstreamError(r.Context(), w, req.Model, start, err)
 	}
 	_ = h.Store.LogRequest(r.Context(), store.LogRow{
 		Timestamp: time.Now(),
@@ -350,7 +352,13 @@ func (h *Responses) runOneStreamAttempt(
 		return nil
 	}
 	if err := h.writeStreamEvents(w, closing, flusher); err != nil {
-		return err
+		// Writing to the client failed (e.g. client disconnected) after
+		// response.completed was already emitted. This is NOT a retryable
+		// error — the response was already completed from our perspective.
+		// Log and return nil so streamWithRetries doesn't incorrectly retry
+		// with already-committed headers.
+		h.Logger.Warn("responses: write closing events failed", "err", err)
+		return nil
 	}
 
 	// Persist the completed response. Phase 5 also appends to the
