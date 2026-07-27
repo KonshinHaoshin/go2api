@@ -45,19 +45,28 @@ func TestValidateRejectsBackground(t *testing.T) {
 	}
 }
 
-func TestValidateRejectsHostedTool(t *testing.T) {
+func TestValidateAcceptsAndDropsHostedTool(t *testing.T) {
+	// web_search and other non-function tools should be silently dropped
+	// (not rejected), so Codex requests with mixed tool types still work.
 	req := &Request{
 		Model: "kimi-k3",
-		Tools: []Tool{{Type: "web_search", HostedConfig: json.RawMessage(`{}`)}},
+		Tools: []Tool{
+			{Type: "web_search"},
+			{Type: "custom", Name: "apply_patch"},
+			{Type: "function", Name: "lookup"},
+		},
 	}
 	req.Input = Input{IsString: true, StringVal: "hi"}
-	err := ValidateRequest(req)
-	if err == nil {
-		t.Fatalf("expected error")
+	if err := ValidateRequest(req); err != nil {
+		t.Fatalf("expected no error for mixed tool types, got: %v", err)
 	}
-	inv := err.(*InvalidRequestError)
-	if inv.Code != "unsupported_tool" {
-		t.Fatalf("expected unsupported_tool, got %s", inv.Code)
+	// ToChatRequest should keep only the function tool.
+	chat, err := ToChatRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected ToChatRequest error: %v", err)
+	}
+	if len(chat.Tools) != 1 || chat.Tools[0].Name != "lookup" {
+		t.Fatalf("expected only function tool 'lookup' in ChatRequest, got %+v", chat.Tools)
 	}
 }
 

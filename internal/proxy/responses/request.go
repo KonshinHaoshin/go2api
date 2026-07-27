@@ -161,23 +161,32 @@ func splitDataURL(url string) (media, payload string, ok bool) {
 	return media, rest[len("base64,"):], true
 }
 
+// clientSideToolTypes contains tool types that Codex and similar clients
+// handle locally — they don't need to be forwarded to the upstream LLM.
+// Instead of rejecting the whole request with 400, we silently drop these
+// so the model still sees the function tools it can actually call.
+var clientSideToolTypes = map[string]bool{
+	"custom":      true, // Codex: apply_patch, etc.
+	"namespace":   true, // Codex: plugin namespaces (image_gen, codex_app)
+	"tool_search": true, // Codex: marketplace tool search
+	"web_search":  true, // hosted search — not implemented on upstream
+	"file_search": true, // hosted file search — not implemented
+	"computer_use": true,
+	"code_interpreter": true,
+}
+
 func validateTool(i int, t Tool) error {
-	switch t.Type {
-	case "function":
+	if t.Type == "function" {
 		if t.Name == "" {
 			return &InvalidRequestError{
-				Message: "tools[i].name is required for type=function",
+				Message: fmt.Sprintf("tools[%d].name is required for type=function", i),
 				Param:   fmt.Sprintf("tools[%d].name", i),
 			}
 		}
-	default:
-		// Hosted tools and unknown types are rejected in v1.
-		return &InvalidRequestError{
-			Message: fmt.Sprintf("tool type %q is not supported", t.Type),
-			Param:   fmt.Sprintf("tools[%d].type", i),
-			Code:    "unsupported_tool",
-		}
+		return nil
 	}
+	// Client-side and hosted tools are silently dropped in ToChatRequest;
+	// no validation error needed — the request proceeds with function tools only.
 	return nil
 }
 
@@ -254,6 +263,14 @@ func ToChatRequest(req *Request) (*ChatRequest, error) {
 	}
 
 	for _, t := range req.Tools {
+		// Only forward function tools to the upstream LLM. Client-side tool
+		// types (custom, namespace, tool_search, etc.) are handled by the
+		// Codex client locally and must not be sent to the upstream — the
+		// upstream will reject them. Silently drop anything that isn't
+		// type=function.
+		if t.Type != "function" {
+			continue
+		}
 		out.Tools = append(out.Tools, ChatTool{
 			Type:        "function",
 			Name:        t.Name,
