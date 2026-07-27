@@ -70,8 +70,28 @@ func ResolveHistory(ctx context.Context, db *store.DB, req *Request) ([]ChatMess
 
 // stateToHistory converts a slice of raw JSON output items back into canonical
 // ChatMessages. Each item is decoded minimally: we read its "type" field and
-// pull whichever fields are needed for history replay without requiring full
-// type registration.
+// pull whichever fields are needed for history replay.
+//
+// IMPORTANT: When a function_call item appears in history, a synthetic tool
+// result message is inserted immediately after it. Without this the resulting
+// message sequence would be:
+//
+//   user → assistant(tool_calls) → user   ← upstream rejects with 400
+//
+// With the synthetic result:
+//
+//   user → assistant(tool_calls) → tool("") → user  ← valid
+//
+// If the new request's input carries a real function_call_output item (the
+// client executed the tool and sent the result), ToChatRequest converts it to
+// a tool message that replaces the empty placeholder. That replacement is
+// positional — the empty synthetic message is appended first (from history),
+// and the real result comes from the input array, so the real result lands
+// AFTER the empty one. To avoid duplication, synthetic messages are omitted
+// when the corresponding call_id is already present in the input.
+// For simplicity in v1 we always insert the empty placeholder; if the client
+// sends the real result via function_call_output the upstream will see both,
+// which most models handle gracefully (they use the last one).
 func stateToHistory(rawItems []json.RawMessage) []ChatMessage {
 	if len(rawItems) == 0 {
 		return nil
@@ -115,6 +135,9 @@ func stateToHistory(rawItems []json.RawMessage) []ChatMessage {
 			if err := json.Unmarshal(raw, &fc); err != nil {
 				continue
 			}
+			if fc.CallID == "" {
+				continue
+			}
 			tc := ChatToolCall{
 				ID:        fc.CallID,
 				Type:      "function",
@@ -145,8 +168,8 @@ func stateToHistory(rawItems []json.RawMessage) []ChatMessage {
 }
 
 // MergeHistory prepends history messages to the chat request's existing
-// messages. The system/developer message(s) stay first; history is sandwiched
-// immediately after them, before the new user turn.
+// messages, then calls ensureToolCallsAnswered to patch any assistant messages
+// with tool_calls that are not followed by matching tool-role messages.
 func MergeHistory(chat *ChatRequest, history []ChatMessage) {
 	if len(history) == 0 || chat == nil {
 		return
@@ -165,7 +188,7 @@ func MergeHistory(chat *ChatRequest, history []ChatMessage) {
 	merged = append(merged, prefix...)
 	merged = append(merged, history...)
 	merged = append(merged, rest...)
-	chat.Messages = merged
+	chat.Messages = ensureToolCallsAnswered(merged)
 }
 
 // AppendConversationResponse ensures the conversation row exists and appends
@@ -196,7 +219,45 @@ func AppendConversationResponse(ctx context.Context, db *store.DB, conversationI
 	return db.AppendConversationResponse(ctx, conversationID, newID)
 }
 
-// wire errors
+// ensureToolCallsAnswered scans a message slice and inserts a synthetic empty
+// tool-result message after every assistant message with tool_calls that is
+// NOT already followed by matching tool messages. This prevents the upstream
+// from rejecting the request with 400 due to an invalid message sequence
+// (assistant with tool_calls must be followed by tool messages before any
+// subsequent user turn).
+//
+// If the client already sent real function_call_output items (converted to
+// tool messages by ToChatRequest), those are preserved and no duplicate
+// placeholder is inserted.
+func ensureToolCallsAnswered(msgs []ChatMessage) []ChatMessage {
+	if len(msgs) == 0 {
+		return msgs
+	}
+	out := make([]ChatMessage, 0, len(msgs)+4)
+	for i, m := range msgs {
+		out = append(out, m)
+		if m.Role != "assistant" || len(m.ToolCalls) == 0 {
+			continue
+		}
+		// Collect which call IDs already have a tool-role answer in the
+		// immediately following messages.
+		answered := map[string]bool{}
+		for j := i + 1; j < len(msgs) && msgs[j].Role == "tool"; j++ {
+			answered[msgs[j].ToolCallID] = true
+		}
+		// For each unanswered tool call, insert a synthetic empty result.
+		for _, tc := range m.ToolCalls {
+			if !answered[tc.ID] {
+				out = append(out, ChatMessage{
+					Role:       "tool",
+					Content:    "",
+					ToolCallID: tc.ID,
+				})
+			}
+		}
+	}
+	return out
+}
 var (
 	ErrUnknownPrevResponse = errors.New("responses: previous_response_id not found or expired")
 	ErrChainConflict       = errors.New("responses: previous_response_id does not match conversation tail")

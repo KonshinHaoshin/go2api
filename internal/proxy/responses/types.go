@@ -102,9 +102,15 @@ func (i *Input) UnmarshalJSON(data []byte) error {
 			}
 			m.itemIndex = idx
 			items = append(items, &m)
+		case "function_call_output":
+			var fc InputFunctionCallOutput
+			if err := json.Unmarshal(raw, &fc); err != nil {
+				return err
+			}
+			fc.itemIndex = idx
+			items = append(items, &fc)
 		default:
-			// Preserve the raw shape for items we don't model yet (reasoning,
-			// function_call_output, etc.) — handled in ToChatRequest.
+			// Preserve the raw shape for items we don't model yet (reasoning, etc.)
 			items = append(items, unknownInputItem{Raw: raw, Index: idx})
 		}
 	}
@@ -190,6 +196,21 @@ func (m *InputMessage) UnmarshalJSON(data []byte) error {
 }
 
 func (m *InputMessage) itemType() string { return "message" }
+
+// InputFunctionCallOutput carries the result of a tool call that the client
+// executed locally. The Responses API sends these as input items with
+// type="function_call_output"; go2api converts them to Chat Completions
+// tool-role messages so the upstream API receives a valid sequence.
+type InputFunctionCallOutput struct {
+	Type      string `json:"type"`    // "function_call_output"
+	CallID    string `json:"call_id"` // matches the function_call's call_id
+	Output    string `json:"output"`  // the result text/JSON from the tool
+
+	itemIndex int
+}
+
+func (f *InputFunctionCallOutput) itemType() string { return "function_call_output" }
+func (f *InputFunctionCallOutput) ItemIndex() int   { return f.itemIndex }
 
 // InputContent is a single content part inside an input message. The Kind
 // discriminates "input_text", "input_image", etc.

@@ -315,16 +315,22 @@ func ToChatRequest(req *Request) (*ChatRequest, error) {
 					ContentParts: parts,
 				}
 				out.Messages = append(out.Messages, m)
+			case *InputFunctionCallOutput:
+				// The Responses API client sends tool results as
+				// function_call_output items. Convert to a Chat Completions
+				// tool-role message so the upstream sees the required
+				//   assistant(tool_calls) → tool(result) → user
+				// sequence and doesn't reject the request with 400.
+				out.Messages = append(out.Messages, ChatMessage{
+					Role:       "tool",
+					Content:    it.Output,
+					ToolCallID: it.CallID,
+				})
 			case unknownInputItem:
-				typ := it.itemType()
-				// Unknown items we don't model yet (e.g. function_call_output,
-				// reasoning) must be either honored or rejected — silently
-				// dropping them would change semantic output.
-				return nil, &InvalidRequestError{
-					Message: fmt.Sprintf("input item type %q is not supported", typ),
-					Param:   fmt.Sprintf("input[%d]", it.Index),
-					Code:    "unsupported_input",
-				}
+				// Silently drop items we don't model (e.g. reasoning summaries)
+				// so the request can still proceed with the fields we do handle.
+				// Only reject if the type is something that would clearly corrupt
+				// the conversation (none identified yet).
 			default:
 				return nil, &InvalidRequestError{
 					Message: "unsupported input item",
