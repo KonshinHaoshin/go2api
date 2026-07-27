@@ -384,9 +384,39 @@ func (s *DB) UpdateTokenHash(ctx context.Context, id, newHash, newPrefix string)
 	return err
 }
 
+// FindTokenByID returns the token row for the given id (or sql.ErrNoRows).
+func (s *DB) FindTokenByID(ctx context.Context, id string) (TokenRow, error) {
+	var t TokenRow
+	var quotaLimit, quotaUsed, createdAt, expiresAt, lastUsed int64
+	var revoked int
+	err := s.QueryRowContext(ctx, `
+        SELECT id, label, token_hash, prefix, quota_limit, quota_used,
+               created_at, expires_at, last_used_at, revoked
+        FROM tokens WHERE id = ?`, id).
+		Scan(&t.ID, &t.Label, &t.TokenHash, &t.Prefix,
+			&quotaLimit, &quotaUsed, &createdAt, &expiresAt, &lastUsed, &revoked)
+	if err != nil {
+		return t, err
+	}
+	t.QuotaLimit = int(quotaLimit)
+	t.QuotaUsed = int(quotaUsed)
+	t.CreatedAt = time.Unix(createdAt, 0)
+	t.ExpiresAt = time.Unix(expiresAt, 0)
+	t.LastUsedAt = time.Unix(lastUsed, 0)
+	t.Revoked = revoked != 0
+	return t, nil
+}
+
 // RevokeToken marks a token as revoked (soft delete).
 func (s *DB) RevokeToken(ctx context.Context, id string) error {
 	_, err := s.ExecContext(ctx, `UPDATE tokens SET revoked = 1 WHERE id = ?`, id)
+	return err
+}
+
+// DeleteToken permanently removes a token row. Only callable after it has
+// already been revoked; the handler checks this before calling.
+func (s *DB) DeleteToken(ctx context.Context, id string) error {
+	_, err := s.ExecContext(ctx, `DELETE FROM tokens WHERE id = ?`, id)
 	return err
 }
 

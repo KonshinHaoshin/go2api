@@ -127,15 +127,35 @@ func (t *Tokens) ListTokens(w http.ResponseWriter, r *http.Request) {
 }
 
 // RevokeToken handles DELETE /admin/tokens/:id.
+//
+// Two-stage delete matching the frontend UX:
+//   - Token is active (revoked=0)  → soft-delete: set revoked=1 (token stops working)
+//   - Token is revoked (revoked=1) → hard-delete: remove the row entirely
 func (t *Tokens) RevokeToken(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/admin/tokens/")
 	if id == "" || strings.Contains(id, "/") {
 		writeJSONError(w, http.StatusBadRequest, "缺少令牌 ID")
 		return
 	}
-	if err := t.Store.RevokeToken(r.Context(), id); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "撤销失败:"+err.Error())
+	// Look up current state to decide soft vs hard delete.
+	row, err := t.Store.FindTokenByID(r.Context(), id)
+	if err != nil {
+		// Row not found → treat as already gone.
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 		return
+	}
+	if row.Revoked {
+		// Already revoked: perform hard delete.
+		if err := t.Store.DeleteToken(r.Context(), id); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "删除失败:"+err.Error())
+			return
+		}
+	} else {
+		// Still active: soft-delete (sets revoked=1).
+		if err := t.Store.RevokeToken(r.Context(), id); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "撤销失败:"+err.Error())
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
