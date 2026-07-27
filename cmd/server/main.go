@@ -65,6 +65,9 @@ func main() {
 		stop := c.StartGC(rootCtx, 5*time.Minute)
 		defer stop()
 	}
+	// Phase 5: response state + conversation chain GC, independent of
+	// cache.Enable. State retention is correctness data, not optional.
+	startResponseStateGC(rootCtx, db, 5*time.Minute, logger)
 
 	upstream := proxy.New(cfg.Upstream.BaseURL, cfg.Upstream.Timeout)
 	prx := proxy.NewProxy(upstream, pool, logger)
@@ -82,4 +85,26 @@ func main() {
 		logger.Error("listen", "err", err)
 		os.Exit(1)
 	}
+}
+
+// startResponseStateGC deletes expired response_state + conversation rows on
+// a fixed cadence. Mirrors cache.StartGC but is unconditional — chain state
+// is correctness, not cached HTTP entities.
+func startResponseStateGC(ctx context.Context, db *store.DB, every time.Duration, logger *slog.Logger) {
+	go func() {
+		ticker := time.NewTicker(every)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if n, err := db.ResponseStateGC(ctx); err != nil {
+					logger.Warn("responses: state GC failed", "err", err)
+				} else if n > 0 {
+					logger.Info("responses: state GC", "deleted", n)
+				}
+			}
+		}
+	}()
 }

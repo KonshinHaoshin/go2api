@@ -107,6 +107,26 @@ CREATE TABLE IF NOT EXISTS tokens (
     revoked      INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_tokens_hash ON tokens(token_hash);
+
+CREATE TABLE IF NOT EXISTS response_state (
+    id                  TEXT PRIMARY KEY,
+    created_at          INTEGER NOT NULL,
+    ttl_at              INTEGER NOT NULL,
+    request_fingerprint TEXT NOT NULL,
+    items_json          TEXT NOT NULL,
+    usage_json          TEXT NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS idx_response_state_ttl         ON response_state(ttl_at);
+CREATE INDEX IF NOT EXISTS idx_response_state_fingerprint ON response_state(request_fingerprint);
+
+CREATE TABLE IF NOT EXISTS conversation (
+    id                TEXT PRIMARY KEY,
+    created_at        INTEGER NOT NULL,
+    last_response_id  TEXT,
+    response_ids_json TEXT NOT NULL DEFAULT '[]',
+    FOREIGN KEY (last_response_id) REFERENCES response_state(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_conversation_last_response ON conversation(last_response_id);
 `
 
 func (s *DB) migrate() error {

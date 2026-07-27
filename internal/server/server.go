@@ -47,6 +47,7 @@ func New(d Deps) *gin.Engine {
 
 	oai := &handler.OpenAI{Proxy: d.Proxy, Cache: d.Cache, Store: d.DB, Logger: d.Logger}
 	ant := &handler.Anthropic{Proxy: d.Proxy, Cache: d.Cache, Store: d.DB, Logger: d.Logger}
+	rsp := &handler.Responses{Proxy: d.Proxy, Store: d.DB, Logger: d.Logger}
 	adm := &handler.Admin{Pool: d.Pool, Store: d.DB}
 	tok := &handler.Tokens{Store: d.DB}
 	models := http.HandlerFunc(handler.Models)
@@ -64,6 +65,7 @@ func New(d Deps) *gin.Engine {
 	{
 		api.POST("/v1/chat/completions", gin.WrapH(oai))
 		api.POST("/v1/messages", gin.WrapH(ant))
+		api.POST("/v1/responses", gin.WrapH(rsp))
 		api.GET("/v1/models", gin.WrapH(models))
 	}
 

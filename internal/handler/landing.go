@@ -82,6 +82,7 @@ const landingHTML = `<!DOCTYPE html>
         <tr><td>GET</td><td><code>/healthz</code></td></tr>
         <tr><td>POST</td><td><code>/v1/chat/completions</code> <span class="muted">(OpenAI 兼容)</span></td></tr>
         <tr><td>POST</td><td><code>/v1/messages</code> <span class="muted">(Anthropic 兼容)</span></td></tr>
+        <tr><td>POST</td><td><code>/v1/responses</code> <span class="muted">(OpenAI Responses 兼容)</span></td></tr>
         <tr><td>GET</td><td><code>/v1/models</code></td></tr>
         <tr><td>GET</td><td><code>/admin/keys</code> <span class="muted">(需要鉴权)</span></td></tr>
         <tr><td>GET</td><td><code>/admin/stats</code> <span class="muted">(需要鉴权)</span></td></tr>
